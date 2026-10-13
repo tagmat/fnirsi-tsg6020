@@ -96,29 +96,61 @@ The firmware files are **not** included in this repository. Download them from F
 
 ## PC control (SCPI)
 
-FNIRSI doesn't document any PC control for this model, but:
+FNIRSI doesn't document any PC control for this model, but it works: the TSG6020 speaks the **SCPI dialect of UNI-T's UTG900 series**. The TSG user manual even references the UTG932 / UTG962 in its spec tables, and those generators have the same headline specs.
 
-- In **normal mode** (not update mode), the generator appears on the PC as a **USB serial port** (e.g. `COM5` on Windows, `/dev/cu.usbserial-…` / `/dev/cu.usbmodem…` on macOS).
-- It **answers SCPI queries**, including `*IDN?`.
+### Connection
 
-The full command set is still being explored. The TSG user manual references UNI-T's **UTG932 / UTG962** in its spec tables, and those generators have the same headline specs. Their [UTG900E programming manual](https://events.uni-trend.com/hubfs/Instrument%20Product%20documentation/Waveform%20Generators/UTG900E/UTG900E%20Programming%20Manual%20V1.0.pdf) (`:CHANnel1:BASE:FREQuency 1000`, `:CHANnel1:OUTPut ON`, …) is a good first guess. **This is not verified on the TSG yet.**
+| | |
+|---|---|
+| Port | Rear USB, **normal mode** (not update mode). Shows up as a USB CDC serial port: `/dev/cu.usbmodem…` on macOS, `COMx` on Windows |
+| Settings | 115200 baud (CDC, so the rate barely matters), 8N1 |
+| Terminator | `\n` |
+| `*IDN?` | `FNIRSI Technologies,TSG6020,<serial>,V1.0.3,V1.2` (software version, hardware version) |
+
+### Verified commands (TSG6020, firmware V1.0.3)
+
+Channel number `<n>` is `1` or `2`. Numbers come back in `1.000000E+03` format.
+
+| Command | Query | Write | Notes |
+|---|:-:|:-:|---|
+| `:CHANnel<n>:BASE:WAVe` | ✅ | ✅ | `SINe`, `SQUare`, … |
+| `:CHANnel<n>:BASE:FREQuency` | ✅ | ✅ | Hz |
+| `:CHANnel<n>:BASE:AMPLitude` | ✅ | ✅ | Vpp |
+| `:CHANnel<n>:BASE:OFFSet` | ✅ | ✅ | V |
+| `:CHANnel<n>:BASE:PHAse` | ✅ | ✅ | degrees |
+| `:CHANnel<n>:BASE:DUTY` | ✅ | ✅ | % |
+| `:CHANnel<n>:OUTPut` | ✅ | ✅ | `ON` / `OFF` |
+| `:CHANnel<n>:LOAD` | ✅ | – | `1.000000E+04` = High-Z |
+| `:CHANnel<n>:MODe` | ✅ | – | Returned `ASK` with modulation off; may report the last selected modulation type |
+| `:CHANnel<n>:ARB:INDex` | ✅ | – | |
+| `MEASure:FREQuency?` | ✅ | – | Built-in counter; `0` with no input |
+
+Writes were checked by reading each value back (6/6 matched) and then restoring the original settings. Writes were tested on CH1; CH2 answered queries the same way.
+
+**Not answered:** `SYSTem:ERRor?`, `SYSTem:VERSion?`, `*OPT?`, `*ESR?`, `*STB?`, generic `:SOURce…` / `FREQ?` style, and Siglent `C1:BSWV?`. Because there is no error queue, the only way to confirm a write is to read the value back.
+
+For the rest of the command set (modulation, sweep, arbitrary waveforms, amplitude units, high/low levels) see the [UNI-T UTG900E programming manual](https://events.uni-trend.com/hubfs/Instrument%20Product%20documentation/Waveform%20Generators/UTG900E/UTG900E%20Programming%20Manual%20V1.0.pdf). Those commands are likely to work but haven't been verified on the TSG yet.
 
 ### Tools
-
-Both scripts send **queries only** and change no settings.
 
 ```bash
 pip install pyserial pyvisa pyvisa-py pyusb libusb-package
 
-# 1. find the port and check that the generator answers *IDN?
-python3 tools/tsg_scpi_probe.py                         # all ports
-python3 tools/tsg_scpi_probe.py /dev/cu.usbserial-XXXX  # one port
+# 1. find the port and check that the generator answers *IDN?   (read-only)
+python3 tools/tsg_scpi_probe.py                              # all ports
+python3 tools/tsg_scpi_probe.py /dev/cu.usbmodemXXXX         # one port
 
-# 2. see which SCPI dialect it understands (UNI-T, generic SCPI, Siglent, counter)
-python3 tools/tsg_scpi_explore.py /dev/cu.usbserial-XXXX
+# 2. see which SCPI dialect it understands                     (read-only)
+python3 tools/tsg_scpi_explore.py /dev/cu.usbmodemXXXX
+
+# 3. write / read-back test on CH1, restores settings afterwards
+python3 tools/tsg_scpi_write_test.py /dev/cu.usbmodemXXXX
+python3 tools/tsg_scpi_write_test.py /dev/cu.usbmodemXXXX --output   # also 5 s of 1 kHz / 1 Vpp on CH1
 ```
 
-Results from other users are welcome. Please open an issue with the explorer output.
+`tsg_scpi_write_test.py` keeps the output **off** unless you pass `--output`. With `--output`, disconnect sensitive loads from CH1 first.
+
+Results from other users (especially TSG3020) are welcome. Please open an issue with the script output, with your serial number removed.
 
 ---
 
@@ -136,7 +168,7 @@ Results from other users are welcome. Please open an issue with the explorer out
 
 **Sıra:** Önce V1.0.1'i yükleyin, çünkü FPGA dosyası yalnızca bu pakette var. Sonra aynı yöntemle V1.0.3'ü yükleyin. Güncelleme için Mac kullanmayın.
 
-**PC kontrolü:** Cihaz normal modda seri port olarak görünüyor ve SCPI komutlarına cevap veriyor. Komut seti henüz araştırılıyor.
+**PC kontrolü:** Cihaz normal modda USB seri port olarak görünüyor ve UNI-T UTG900 serisinin SCPI komutlarını anlıyor (`:CHANnel1:BASE:FREQuency 1000`, `:CHANnel1:OUTPut ON` gibi). Dalga biçimi, frekans, genlik, ofset, faz, görev oranı ve çıkış komutlarının hem okuması hem yazması doğrulandı.
 
 ---
 
